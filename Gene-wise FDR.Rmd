@@ -42,17 +42,36 @@ SNPpositions <- function(SNPnames){
 ```
 
 #Function that takes the gene names from the GTEx data and converts them into the genepos data.frame object matrix eQTL required for cis eQTL analysis. Gives you gene ID, chromosome, and left and right positions. But not really, because I couldn't get that to work.
-```{r Gene Positions Dataframe}
+```{r Function: Gene Positions Dataframe}
 setwd("~/Desktop/github-gtex-eqtl/DBs") #Sets the wd to the appropriate place
 
 GTEx <- read.table(file="GTEx_Analysis_2015-01-12_eQTLInputFiles_genePositions.txt", header=TRUE, stringsAsFactors = FALSE)
 grep("ENSG00000268020.2", GTEx[,"Id"]) #Gives the index of the given gene.
-grep("ENSG00000225880.4", as.character(HGNC))
 
-genePositions(gene_list, DB_file){
-  genespos <- data.frame(geneid = character(), chr=integer(), left=integer(), right=integer(), stringsAsFactors = FALSE)
-  for(gene in gene_list){}
+#A function to take a GTEx gene positions file and a list of desired genes, then creating the required data frame object of these genes for cis eQTL analysis. Simply reformats the GTEX gene positions file into the required data frame object if no gene list is specified.
+genePositions <- function(genePos_file, gene_list=NULL){
+  gene_refs <- read.table(file=genePos_file, header=TRUE, stringsAsFactors = FALSE) #Reads in the gene positions file.
+  if(!is.null(gene_list)){
+    genespos <- data.frame(geneid = character(), chr=integer(), left=integer(), right=integer(), stringsAsFactors = FALSE) #Initializes the data frame.
+    for(gene in gene_list){ #Iterates through all the genes in the gene_list and adds their relevant information to the genespos dataframe.
+      genespos[gene,] <- gene_refs[which(gene_refs[,"Id"]==gene),]
+    }
+  }
+  else{
+    genespos <- as.data.frame(gene_refs) #Copies the gene_refs 
+    colnames(genespos) <- c("geneid", "chr", "left", "right")
+  }
+  
+  #Coercing the 2nd-4th columns of the genespos dataframe to be numeric. Required for the matrix eQTL cis analysis.
+  genespos[,2] <- as.numeric(genespos[,2])
+  genespos[,3] <- as.numeric(genespos[,3])
+  genespos[,4] <- as.numeric(genespos[,4])
+  
+  #Returns the final dataframe.
+  return(genespos)
 }
+
+newtable <- genePositions("GTEx_Analysis_2015-01-12_eQTLInputFiles_genePositions.txt", gene_list=genespos[,1])
 
 #I couldn't get a function to actually work (especially b/c none of these genes were found in the text file given). So, alternatively, it may end up simply being easier to manually input these by searching the names on UCSC ENCODE:
 genespos <- data.frame(geneid = character(), chr=integer(), left=integer(), right=integer(), stringsAsFactors = FALSE)
