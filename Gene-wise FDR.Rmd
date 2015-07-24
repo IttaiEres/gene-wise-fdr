@@ -1,0 +1,557 @@
+---
+title: "Gene-Wise FDR"
+author: "Ittai Eres"
+date: "June 24, 2015"
+output: html_document
+---
+
+#A function to look through the output from a Matrix_eQTL_main (MEM) call, finding the rows with the minimum p-value for each gene. Works by iterating through all the unique genes and finding the first instance of their occurrence in a matrix formed from the output data, since the data is arranged in increasing p-value (meaning the first instance of a gene will also be the p-value minimum for that gene). Returns all these rows, or just their p-vals, if I so desire. Note that this only works on a cis analysis of all eQTLs, but this can be changed by having the second line within this chunk instead read "MEM$all$eqtls".
+```{r Function: Lowest p Values}
+lowest.pvals <- function(MEM){ #Note that the parameter is a "list" that is passed.
+  MEM <- as.matrix(MEM$cis$eqtls) #To convert from the strange list output to a matrix.
+  genelist <- unique(MEM[,"gene"]) #To get the names of all the unique genes in the output.
+  output <- matrix(,length(genelist), ncol(MEM)) #Creates the null output matrix with appropriate dimensions.
+  for(gene in 1:length(genelist)){ #Iterates through all genes
+    output[gene,] <- MEM[which.max(MEM[,"gene"]==genelist[gene]),] #which.max is actually going to get the minimum index here, so this will find the first row in the given amatrix where the gene appears. Since the p-values increase down the table, this will also be the lowest p-value for that gene. The entire row is then taken and put into the output matrix.
+  }
+  colnames(output) <- colnames(MEM) #Sets the column names of the output matrix to 
+  rownames(output) <- genelist #Sets the row names of the output matrix to the genes.
+  return((output))#[,"pvalue"]) #If I only wanted the p-vals with the gene names.
+}
+
+#A sample call. Easy as pie. But this one won't work because null.me was a full eQTL analysis (rather than just a cis one).
+#lowest.pvals(null.me)
+```
+
+#A function that takes the SNP names from the GTEx data and converts them into the snpspos data.frame object matrix eQTL required for cis eQTL analysis. Gives you SNP GTEx name, chromosome, and position.
+```{r Function: SNP Positions}
+#The first parameter to pass is basically the SNPs' weird coord names from the GTEx data. Easiest to just do rownames(snps) to get this.
+SNPpositions <- function(SNPnames){
+  snpspos <- data.frame(snpid = character(), chr=integer(), pos=integer(), stringsAsFactors = FALSE) #initializes the blank data frame with the appropriate column names.
+  for(SNP in 1:length(SNPnames)){ #Iterates through every SNP passed to the function.
+    snpspos[SNP,] <- c(SNPnames[SNP], unlist(strsplit(SNPnames[SNP], "_"))[1:2])
+   #The first part gets the rsID, the second part extracts the chromosome and position of the SNP based off the formatting of the GTEx data in the snps sliced data, chromo_position_ref_alt_build.
+  }
+  snpspos[,2] <- as.numeric(snpspos[,2]) #Converts the second column to numeric type.
+  snpspos[,3] <- as.numeric(snpspos[,3]) #Converts the second column to numeric type.
+  return(snpspos)
+}
+
+#A sample call. Works best on one of the sliced data sets of SNPs created in preparation for a matrix eQTL run.
+#SNPlocs <- SNPpositions(rownames(snps2))
+```
+
+#Function that takes the gene names from the GTEx data and converts them into the genepos data.frame object matrix eQTL required for cis eQTL analysis. Gives you gene ID, chromosome, and left and right positions. But not really, because I couldn't get that to work.
+```{r Gene Positions Dataframe}
+setwd("~/Desktop/github-gtex-eqtl/DBs") #Sets the wd to the appropriate place
+
+GTEx <- read.table(file="GTEx_Analysis_2015-01-12_eQTLInputFiles_genePositions.txt", header=TRUE, stringsAsFactors = FALSE)
+grep("ENSG00000268020.2", GTEx[,"Id"]) #Gives the index of the given gene.
+grep("ENSG00000225880.4", as.character(HGNC))
+
+genePositions(gene_list, DB_file){
+  genespos <- data.frame(geneid = character(), chr=integer(), left=integer(), right=integer(), stringsAsFactors = FALSE)
+  for(gene in gene_list){}
+}
+
+#I couldn't get a function to actually work (especially b/c none of these genes were found in the text file given). So, alternatively, it may end up simply being easier to manually input these by searching the names on UCSC ENCODE:
+genespos <- data.frame(geneid = character(), chr=integer(), left=integer(), right=integer(), stringsAsFactors = FALSE)
+genespos[1,] <- c("ENSG00000268903.1", 1, 135141, 135895)
+genespos[2,] <- c("ENSG00000231709.1", 1, 521369, 523833)
+genespos[3,] <- c("ENSG00000229344.1", 1, 568137, 568818)
+genespos[4,] <- c("ENSG00000224956.5", 1, 661611, 663527)
+genespos[5,] <- c("ENSG00000228327.2", 1, 700237, 714006)
+genespos[6,] <- c("ENSG00000237491.4", 1, 721180, 723052)
+genespos[7,] <- c("ENSG00000177757.1", 1, 752751, 755214)
+genespos[8,] <- c("ENSG00000240453.1", 1, 745489, 753092)
+genespos[9,] <- c("ENSG00000225880.4", 1, 761586, 762902)
+genespos[10,] <- c("ENSG00000228794.4", 1, 762988, 794826)
+genespos[11,] <- c("ENSG00000223764.2", 1, 852250, 855072)
+genespos[,2] <- as.numeric(genespos[,2])
+genespos[,3] <- as.numeric(genespos[,3])
+genespos[,4] <- as.numeric(genespos[,4])
+```
+
+#Trying to run matrix eQTL on only cis genes. Starting from scratch on the data, since modifications to clones of this data have also altered the original data in my past experience.
+```{r Sample cis eQTL Analysis}
+#Loads the package.
+library(MatrixEQTL)
+
+#Sets the working directory from which to find the data.
+setwd("~/Desktop/github-gtex-eqtl")
+
+## Location of the package with the data files.
+base.dir = '.';
+
+## Settings
+# Linear model to use, modelANOVA, modelLINEAR, or modelLINEAR_CROSS
+useModel = modelLINEAR; # modelANOVA, modelLINEAR, or modelLINEAR_CROSS
+
+# Genotype file name
+SNP_file_name = paste(base.dir, "/data/SNP.txt", sep="");
+
+# Gene expression file name
+expression_file_name = paste(base.dir, "/data/GE.txt", sep="");
+
+# Covariates file name
+# Set to character() for no covariates
+covariates_file_name = paste(base.dir, "/data/Covariates.txt", sep="");
+
+# Output file name
+output_file_name = tempfile();
+
+# Only associations significant at this level will be saved
+pvOutputThreshold = 0
+pvOutputThreshold.cis = 1
+
+# Error covariance matrix
+# Set to numeric() for identity.
+errorCovariance = numeric();
+# errorCovariance = read.table("Sample_Data/errorCovariance.txt");
+
+
+## Load genotype data
+
+snps2 = SlicedData$new();
+snps2$fileDelimiter = "\t";      # the TAB character
+snps2$fileOmitCharacters = "NA"; # denote missing values;
+snps2$fileSkipRows = 1;          # one row of column labels
+snps2$fileSkipColumns = 1;       # one column of row labels
+snps2$fileSliceSize = 2000;      # read file in slices of 2,000 rows
+snps2$LoadFile(SNP_file_name);
+
+## Load gene expression data
+
+gene = SlicedData$new();
+gene$fileDelimiter = "\t";      # the TAB character
+gene$fileOmitCharacters = "NA"; # denote missing values;
+gene$fileSkipRows = 1;          # one row of column labels
+gene$fileSkipColumns = 1;       # one column of row labels
+gene$fileSliceSize = 2000;      # read file in slices of 2,000 rows
+gene$LoadFile(expression_file_name);
+
+## Load covariates
+
+cvrt = SlicedData$new();
+cvrt$fileDelimiter = "\t";      # the TAB character
+cvrt$fileOmitCharacters = "NA"; # denote missing values;
+cvrt$fileSkipRows = 1;          # one row of column labels
+cvrt$fileSkipColumns = 1;       # one column of row labels
+if(length(covariates_file_name)>0) {
+cvrt$LoadFile(covariates_file_name);
+}
+
+## Make the SNP positions data.frame object for the cis analysis.
+
+setwd("~/Desktop/github-gtex-eqtl/DBs") #Set the appropriate working directory.
+database <- "snp-gene.sqlite3" #Define the database.
+
+SNPlocs <- SNPpositions(rownames(snps2))
+
+## Run the analysis
+
+me = Matrix_eQTL_main(
+snps = snps2,
+gene = gene,
+cvrt = cvrt,
+output_file_name = output_file_name,
+output_file_name.cis = output_file_name,
+pvOutputThreshold = 0,
+pvOutputThreshold.cis = 1,
+snpspos = SNPlocs,
+genepos = genespos,
+cisDist = 1e5,
+useModel = useModel, 
+errorCovariance = errorCovariance, 
+verbose = FALSE,
+pvalue.hist = TRUE,
+min.pv.by.genesnp = TRUE,
+noFDRsaveMemory = FALSE);
+
+unlink(output_file_name);
+#head(me2$cis$eqtls)
+#unique(lowest.pvals(me2)[,"gene"])
+#unique(me2$cis$eqtls$gene)
+#ez.test <- lowest.pvals(me2)
+#test1 <- list()
+#test1$Risaletter <- ez.test[,c(1,4)]
+#test1$howisitordered <- "SHALOM"
+#ez.test[ez.test[, gene=="ENSG00000237491.4"], "pvalue"]
+```
+
+#Now, trying to run cis eQTL analysis on many permuted datasets in addition to the real data, and storing the minimum p-vals from each of these permutations. I attempt to do this until there are 5 cases where the null data's minimum p-value is lower than that of the real data.
+```{r Function: Gene-Wise p-values}
+gene.wise.p.vals <- function(numeratorR = 5, genepos = genespos, SNP_file = "SNP.txt", expression_file = "GE.txt", covariates_file = "Covariates.txt", dataWD = "~/Desktop/github-gtex-eqtl/data", useModel = modelLINEAR, output_file_name = tempfile(), pvOutputThreshold = 0, pvOutputThreshold.cis = 1, cisDist=1e5, errorCovariance = numeric()){
+  
+  ## First, define the working directory where SNP_file, expression_file, and covariate_file can   be found.
+  setwd(dataWD)
+  
+  ## Now, define the SNP, gene expression, and covariate dataframes, to later run both normal     (real data) and null (permuted data) analyses:
+  
+  #Loads SNP genotype data.
+  snps = SlicedData$new();
+  snps$fileDelimiter = "\t";      # the TAB character
+  snps$fileOmitCharacters = "NA"; # denote missing values;
+  snps$fileSkipRows = 1;          # one row of column labels
+  snps$fileSkipColumns = 1;       # one column of row labels
+  snps$fileSliceSize = 2000;      # read file in slices of 2,000 rows
+  snps$LoadFile(SNP_file);
+  
+  #Loads gene expression data.
+  expr = SlicedData$new();
+  expr$fileDelimiter = "\t";      # the TAB character
+  expr$fileOmitCharacters = "NA"; # denote missing values;
+  expr$fileSkipRows = 1;          # one row of column labels
+  expr$fileSkipColumns = 1;       # one column of row labels
+  expr$fileSliceSize = 2000;      # read file in slices of 2,000 rows
+  expr$LoadFile(expression_file);
+
+  #Loads covariates data.
+  cvrt = SlicedData$new();
+  cvrt$fileDelimiter = "\t";      # the TAB character
+  cvrt$fileOmitCharacters = "NA"; # denote missing values;
+  cvrt$fileSkipRows = 1;          # one row of column labels
+  cvrt$fileSkipColumns = 1;       # one column of row labels
+  if(length(covariates_file)>0) {
+  cvrt$LoadFile(covariates_file);
+  }
+  
+  ## Runs a normal matrix_eQTL_main analysis for cis SNP eQTLs on the main dataset, finding the      SNPs with the minimum p-value for each gene, in order to store the "real" data analysis.
+  real.data <- Matrix_eQTL_main(snps, expr, cvrt, output_file_name = output_file_name,
+output_file_name.cis = output_file_name, pvOutputThreshold = pvOutputThreshold, pvOutputThreshold.cis = pvOutputThreshold.cis, snpspos = SNPpositions(rownames(snps)), genepos = genepos, cisDist = cisDist, useModel = useModel, errorCovariance = errorCovariance, verbose = FALSE, pvalue.hist = FALSE, min.pv.by.genesnp = TRUE, noFDRsaveMemory = FALSE)
+  
+  ## Stores the most significant SNPs per each gene in the new matrix of real.pvals.
+  real.pvals <- as.matrix(real.data$cis$min.pv.gene)
+  
+  ## Initializes a list to store all the null distribution p-values for each gene, in addition to   each of their real p-values.
+  pvals.list <- list()
+  pvals.list$RealValues <- real.pvals #Creates the first object in the pvals list, a matrix of     each gene's most relevant (i.e. lowest p-value) SNP, and the associated p-value.
+  
+  ## Begins iterating through every gene, creating null distributions of the data by using         permuted genotypes. Matrix_eQTL_main is then run on each permuted dataset, and the minimum       p-value is stored for the gene in question. This continues until there are 5 instances of the    null data creating more significant p-values for each gene than the real data. The number of     permutations done, as well as all the p-values, are saved for each gene.
+  for(gene in rownames(real.pvals)){ #Iterates through all the genes.
+    real.pval <- as.numeric(real.pvals[gene,]) #Pulls out the gene's real p-value.
+    null.pvals <- vector() #Initializes a blank vector to store null p-values.
+    
+    ## Keeps permuting new data until "numeratorR" or more p-values from null distributions are      more significant than the real p-value. Could take a while.
+    while(((sum(real.pval >= null.pvals)) < numeratorR) & length(null.pvals) <1000){
+      snps$ColumnSubsample(sample(seq(1:298))) #Permutes the genotype data.
+      
+      ## Matrix_eQTL_main call to create the null data.
+      null.data <- Matrix_eQTL_main(snps, expr, cvrt, output_file_name = output_file_name,
+output_file_name.cis = output_file_name, pvOutputThreshold = pvOutputThreshold, pvOutputThreshold.cis = pvOutputThreshold.cis, snpspos = SNPpositions(rownames(snps)), genepos = genepos, cisDist = cisDist, useModel = useModel, errorCovariance = errorCovariance, verbose = FALSE, pvalue.hist = FALSE, min.pv.by.genesnp = TRUE, noFDRsaveMemory = FALSE)
+      
+      ## Pulls out the minimal null p-value for the gene, and adds it to the null.pvals vector.
+      null.pvals <- c(null.pvals, as.numeric(as.matrix(null.data$cis$min.pv.gene)[gene,]))
+       ## So I can know about the progress of the function.
+      cat(paste("Still working on ", gene, ", currently on row ", length(null.pvals), "\n", sep=""))
+      
+    }
+    
+    ## Once there are at least numeratorR number of null distribution p-values more significant      than the real one, assigns the vector of these null p-values to the gene's value in the          pvals.list.
+    pvals.list[[gene]] <- null.pvals
+    print(paste(gene, "is complete."))
+  }
+  
+  ## Once all of the genes have been through the process of getting at least numeratorR p-values   from null distributions that are more significant than the p-value from the real data,           calculates the new p-value for each gene and puts it into a new matrix, final_result.
+  final_result <- matrix(,nrow = length(real.pvals), ncol = 1)
+  rownames(final_result) <- rownames(real.pvals)
+  for(gene in rownames(real.pvals)){
+    final_result[gene,] <- ((numeratorR+1)/(length(pvals.list[[gene]])+1))
+  }
+  
+  pvals.list$final.results <- final_result
+  return(pvals.list)
+}  
+
+test <- gene.wise.p.vals()
+```
+
+```{r Output: Looking at Output of Gene-wise-p.vals function}
+#Set working directory.
+setwd("~/Desktop/github-gtex-eqtl/Outputs")
+
+#Assign the output RDS to a variable name.
+one.k.out <- readRDS("new_try.rds")
+ten.k.out <- readRDS("tenK.rds")
+
+#A function to make sure the output is as it should be.
+double.checker <- function(a_list){
+  for(index in 2:(length(a_list)-1)){
+    gene<- names(a_list)[index]
+    final <- ((sum(a_list[[1]][gene,]>a_list[[index]]))+1)/((length(a_list[[index]]))+1)
+    print(identical(final, a_list$final.result[gene,]))
+  }
+}
+pvals <- one.k.out$final.result[,1]
+
+#Loads the q-value package.
+source("http://bioconductor.org/biocLite.R")
+biocLite("qvalue")
+library("qvalue")
+qvals <- qvalue(pvals)
+qplot(qvals)
+lfdr(pvals)
+me$cis$min.pv.gene
+```
+
+
+
+#The initial analysis with matrix_eQTL_engine. On the real data, looking at all eQTLs (not just cis).
+```{r Sample Matrix eQTL Call on all SNPs}
+#Loads the package.
+library(MatrixEQTL)
+
+#Sets the working directory from which to find the data.
+setwd("~/Desktop/github-gtex-eqtl")
+
+## Location of the package with the data files.
+## base.dir = find.package('MatrixEQTL');
+base.dir = '.';
+
+## Settings
+
+# Linear model to use, modelANOVA, modelLINEAR, or modelLINEAR_CROSS
+useModel = modelLINEAR; # modelANOVA, modelLINEAR, or modelLINEAR_CROSS
+
+# Genotype file name
+SNP_file_name = paste(base.dir, "/data/SNP.txt", sep="");
+
+# Gene expression file name
+expression_file_name = paste(base.dir, "/data/GE.txt", sep="");
+
+# Covariates file name
+# Set to character() for no covariates
+covariates_file_name = paste(base.dir, "/data/Covariates.txt", sep="");
+
+# Output file name
+output_file_name = tempfile();
+
+# Only associations significant at this level will be saved
+pvOutputThreshold = 1;
+
+# Error covariance matrix
+# Set to numeric() for identity.
+errorCovariance = numeric();
+# errorCovariance = read.table("Sample_Data/errorCovariance.txt");
+
+
+## Load genotype data
+
+snps = SlicedData$new();
+snps$fileDelimiter = "\t";      # the TAB character
+snps$fileOmitCharacters = "NA"; # denote missing values;
+snps$fileSkipRows = 1;          # one row of column labels
+snps$fileSkipColumns = 1;       # one column of row labels
+snps$fileSliceSize = 2000;      # read file in slices of 2,000 rows
+snps$LoadFile(SNP_file_name);
+
+## Load gene expression data
+
+gene = SlicedData$new();
+gene$fileDelimiter = "\t";      # the TAB character
+gene$fileOmitCharacters = "NA"; # denote missing values;
+gene$fileSkipRows = 1;          # one row of column labels
+gene$fileSkipColumns = 1;       # one column of row labels
+gene$fileSliceSize = 2000;      # read file in slices of 2,000 rows
+gene$LoadFile(expression_file_name);
+
+## Load covariates
+
+cvrt = SlicedData$new();
+cvrt$fileDelimiter = "\t";      # the TAB character
+cvrt$fileOmitCharacters = "NA"; # denote missing values;
+cvrt$fileSkipRows = 1;          # one row of column labels
+cvrt$fileSkipColumns = 1;       # one column of row labels
+if(length(covariates_file_name)>0) {
+cvrt$LoadFile(covariates_file_name);
+}
+
+## Run the analysis
+
+me = Matrix_eQTL_engine(
+snps = snps,
+gene = gene,
+cvrt = cvrt,
+output_file_name = output_file_name,
+pvOutputThreshold = pvOutputThreshold,
+useModel = useModel, 
+errorCovariance = errorCovariance, 
+verbose = TRUE,
+pvalue.hist = TRUE,
+min.pv.by.genesnp = FALSE,
+noFDRsaveMemory = FALSE);
+
+unlink(output_file_name);
+
+## Results:
+
+cat('Analysis done in: ', me$time.in.sec, ' seconds', '\n');
+cat('Detected eQTLs:', '\n');
+show(me$all$eqtls)
+
+## Plot the histogram of all p-values
+
+plot(me)
+
+## Now I also want to run matrix eQTL on a "null" dataset, which I'll create here by permuting the GTEX genotypes' columns. First, I read from the snps file once again to make another sliced data object of genotypes for the null dist'n:
+
+null.snps = SlicedData$new();
+null.snps$fileDelimiter = "\t";      # the TAB character
+null.snps$fileOmitCharacters = "NA"; # denote missing values;
+null.snps$fileSkipRows = 1;          # one row of column labels
+null.snps$fileSkipColumns = 1;       # one column of row labels
+null.snps$fileSliceSize = 2000;      # read file in slices of 2,000 rows
+null.snps$LoadFile(SNP_file_name);
+
+#Now, I permute all the columns of null.snps, to create a null dataset of genotypes:
+null.snps$ColumnSubsample(sample(seq(1:298)))
+
+# Runs the analysis, this time on what should be a null distribution, since the individual IDs connected to the genotypes have been permuted.
+output_file_name = tempfile();
+
+null.me = Matrix_eQTL_engine(
+snps = null.snps,
+gene = gene,
+cvrt = cvrt,
+output_file_name = output_file_name,
+pvOutputThreshold = pvOutputThreshold,
+useModel = useModel, 
+errorCovariance = errorCovariance, 
+verbose = TRUE,
+pvalue.hist = TRUE,
+min.pv.by.genesnp = FALSE,
+noFDRsaveMemory = FALSE);
+
+unlink(output_file_name);
+
+## Results:
+
+cat('Analysis done in: ', null.me$time.in.sec, ' seconds', '\n');
+cat('Detected eQTLs:', '\n');
+show(null.me$all$eqtls)
+head(null.me$all$eqtls)
+```
+
+#A function to look up a SNP with the strange GTEx coordinates given, and produce its resulting rsID.
+```{r Function: rsIDer}
+library(rhdf5)
+library(RSQLite)
+
+rsIDer <- function(coord, db){
+  # Basic search
+  conn <- dbConnect(dbDriver("SQLite"), db)
+  results <- dbSendQuery(conn, paste("select rsid, cisgenes from dbsnp144 where coord='", coord, "'", sep = ''))
+  output <- fetch(results)
+  dbClearResult(results)
+  
+  # Format output
+  if (ncol(output) == 3) {
+    rss <- output[1,2]
+  } else {
+    rss <- NULL
+  }
+  return(output[1,1])
+  dbDisconnect(conn)
+  invisible(db)
+}
+
+#A sample call. Easy as 1-2-3.
+setwd("~/Desktop/github-gtex-eqtl/DBs") #Set the appropriate working directory.
+database <- "snp-gene.sqlite3" #Define the database.
+rsIDer(coord="1_833659_T_A_b37", db=database)
+```
+
+#Testing how to create a good output file from a list that I can then read back in to R as a list later for further manipulation.
+```{r Output File Testing}
+tester <- function(output_name){
+  my.list <- list()
+  my.list$chicken <- matrix(c(1, 2, 3, 4, 5, 6, 7, 8), 4, 2)
+  my.list$finger <- c(9, 10, 11, 12, 13, 14, 15)
+  poopypants <- c("Mom", "I", "shit", "myself!")
+  my.list$lickin <- data.frame(poopypants = character(), peepeepants = integer(), stringsAsFactors = FALSE)
+  my.list$lickin[1:4, "poopypants"] <- poopypants
+  my.list$lickin[1:4, "peepeepants"] <- c(1, 0, 0, 1)
+  saveRDS(my.list, file = paste(output_name, ".rds", sep = ""))
+}
+tester("HAHAHAHA")
+#saveRDS(object, file = "this.rds")
+#new.name <- readRDS(file)
+```
+
+
+#Things I think I don't need anymore. But just in case. Here they are.
+```{r Notes and Old Things}
+
+#Installing qvalue
+source("http://bioconductor.org/biocLite.R")
+biocLite("qvalue")
+
+#First, I need to determine how many genes are in the null dataset I created.
+head(null.me$all$eqtls)
+null.me$all$eqtls$gene 
+unique(null.me$all$eqtls$gene) #There are 11 distinct genes being looked at.
+null.2 <- as.matrix(null.me$all$eqtls)
+genes <- unique(null.2[,"gene"]) #Assigns the 11 distinct genes to the genes vector.
+  
+ShowSNP <- function(coord, db) {
+  if (!file.exists(db)) {
+    stop(paste("File", db, "does not exist!"))
+  }
+  # Basic search
+  conn <- dbConnect(dbDriver("SQLite"), db)
+  results <- dbSendQuery(conn, paste("select rsid, cisgenes from dbsnp144 where coord='", coord, "'", sep = ''))
+  output <- fetch(results)
+  dbClearResult(results)
+  
+  #Error message if nothing is found.
+  if (nrow(output) == 0) {
+    dbDisconnect(conn)
+    stop(paste("Cannot find coord", coord, "in", db))
+  }
+  
+  # Format output
+  if (ncol(output) == 3) {
+    rss <- output[1,2]
+  } else {
+    rss <- NULL
+  }
+  #cat(paste(output))
+  print(output[1,1])
+  cat(paste("\033[1mGTEx SNP ID:\033[0m", output[1,1], '\n'))
+  if (ncol(output) == 3) {
+    cat(paste("\033[1mcisGenes:\033[0m", output[1,3], '\n'))
+    cat(paste("\033[1mMultiple rsID found for the same genomic coordinate:\033[0m", output[1,2], '\n'))
+  } else {
+    cat(paste("\033[1mcisGenes:\033[0m", output[1,2], '\n'))
+  }
+  dbDisconnect(conn)
+  invisible(db)
+}
+
+#Now, for the actual lookup.
+setwd("~/Desktop/github-gtex-eqtl/DBs") #Set the appropriate working directory.
+
+#Assign the database to a variable.
+database <- "snp-gene.sqlite3"
+ShowSNP(coord="1_833659_T_A_b37", db=database) #Outputs the SNP's rsID, along with the genes that it is cis to (with cis being defined by 100kb either direction of the SNP)
+
+#Testing some conditionals with a while loop.
+i <- 1
+k <- 1
+while((i <= 10) & (k <=10)){
+  i <- i + runif(1, .5, 10)
+  k <- k + runif(1, .5, 1)
+  cat(paste("i =", i, "\n k=", k, "\n", sep=""))
+}
+```
+
+#p-value generator, making random p-values for random #s of SNPs within a defined total # of genes and total # SNPS
+```{r Function: P Value Generator}
+pval.generator <- function(SNPs, genes){
+  initial_data <- runif(SNPs*genes)
+  my.matrix <- matrix(initial_data, SNPs, genes)
+  return(my.matrix)
+}
+
+pval.generator(10, 5)
+```
